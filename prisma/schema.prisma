@@ -1,0 +1,486 @@
+// Dental Voice Agent — Prisma schema
+// Multi-tenant: Organization -> Clinic -> Users/Dentists/Patients/AIAgents/Calls/Appointments
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// ----------------------------- Tenancy -----------------------------
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  plan      String   @default("FREE")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  clinics   Clinic[]
+  users     User[]
+}
+
+model Clinic {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  slug           String   @unique
+  timezone       String   @default("America/New_York")
+  address        String?
+  city           String?
+  state          String?
+  zip            String?
+  phone          String?
+  email          String?
+  website        String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  teamMembers    TeamMember[]
+  dentists       Dentist[]
+  patients       Patient[]
+  phoneNumbers   PhoneNumber[]
+  agents         AIAgent[]
+  calls          Call[]
+  appointments   Appointment[]
+  conversations  Conversation[]
+  knowledgeDocs  KnowledgeDocument[]
+  integrations   Integration[]
+  campaigns      Campaign[]
+  notifications  Notification[]
+  auditLogs      AuditLog[]
+  businessHours  BusinessHours[]
+  appointmentTypes AppointmentType[]
+
+  @@index([organizationId])
+}
+
+// ----------------------------- People -----------------------------
+
+model User {
+  id             String   @id @default(cuid())
+  organizationId String
+  email          String   @unique
+  name           String
+  passwordHash   String?
+  role           String @default("MEMBER")
+  image          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  teamMembers    TeamMember[]
+  auditLogs      AuditLog[]
+
+  @@index([organizationId])
+}
+
+model TeamMember {
+  id        String   @id @default(cuid())
+  clinicId  String
+  userId    String?
+  name      String
+  email     String?
+  role      String @default("MEMBER")
+  phone     String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  clinic    Clinic @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  user      User?  @relation(fields: [userId], references: [id])
+
+  @@index([clinicId])
+}
+
+model Dentist {
+  id          String   @id @default(cuid())
+  clinicId    String
+  name        String
+  specialty   String?
+  bio         String?
+  email       String?
+  phone       String?
+  color       String   @default("#0ea5e9")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  clinic      Clinic       @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  appointments Appointment[]
+  schedules   DentistSchedule[]
+
+  @@index([clinicId])
+}
+
+model DentistSchedule {
+  id          String   @id @default(cuid())
+  dentistId   String
+  dayOfWeek   Int      // 0=Sun ... 6=Sat
+  startTime   String   // "09:00"
+  endTime     String   // "17:00"
+  dentist     Dentist  @relation(fields: [dentistId], references: [id], onDelete: Cascade)
+
+  @@index([dentistId])
+}
+
+model Patient {
+  id           String   @id @default(cuid())
+  clinicId     String
+  firstName    String
+  lastName     String
+  phone        String
+  email        String?
+  dateOfBirth  DateTime?
+  address      String?
+  city         String?
+  state        String?
+  zip          String?
+  insurance    String?
+  notes        String?
+  isNew        Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  clinic       Clinic       @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  calls        Call[]
+  appointments Appointment[]
+  messages     Message[]
+  conversations Conversation[]
+
+  @@index([clinicId])
+  @@index([phone])
+}
+
+// ----------------------------- AI Agents -----------------------------
+
+model AIAgent {
+  id          String   @id @default(cuid())
+  clinicId    String
+  name        String
+  description String?
+  status      String   @default("ACTIVE")
+  voice       String   @default("Maya")
+  language    String   @default("en-US")
+  phoneNumber String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  clinic      Clinic       @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  config      AgentConfig?
+  calls       Call[]
+  campaigns   Campaign[]
+
+  @@index([clinicId])
+}
+
+model AgentConfig {
+  id              String   @id @default(cuid())
+  agentId         String   @unique
+  greeting        String
+  personality     String   @default("Friendly, professional, calm")
+  responseStyle   String   @default("Concise")
+  language        String   @default("en-US")
+  voice           String   @default("Maya")
+  // Allowed actions
+  canBook         Boolean  @default(true)
+  canReschedule   Boolean  @default(true)
+  canCancel       Boolean  @default(true)
+  canAnswerFAQ    Boolean  @default(true)
+  canSendSMS      Boolean  @default(true)
+  canTransfer     Boolean  @default(true)
+  canCollectInfo  Boolean  @default(true)
+  // Behavior
+  afterHoursBehavior String @default("Answer and offer voicemail")
+  emergencyHandling  String @default("Direct to emergency resources and offer transfer")
+  maxRetryAttempts   Int    @default(2)
+  // Escalation
+  escalateOnHumanRequest Boolean @default(true)
+  escalateOnComplaint    Boolean @default(true)
+  escalateOnBilling      Boolean @default(true)
+  escalateOnUnanswered   Boolean @default(true)
+  escalateAfterAttempts  Int    @default(2)
+  transferTarget         String @default("Reception")
+  updatedAt      DateTime @updatedAt
+
+  agent          AIAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+}
+
+model BusinessHours {
+  id         String   @id @default(cuid())
+  clinicId   String
+  dayOfWeek  Int
+  startTime  String
+  endTime    String
+  closed     Boolean  @default(false)
+  clinic     Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  @@index([clinicId])
+}
+
+// ----------------------------- Telephony -----------------------------
+
+model PhoneNumber {
+  id          String   @id @default(cuid())
+  clinicId    String
+  number      String   @unique
+  label       String?
+  provider    String   @default("mock")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  clinic      Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  @@index([clinicId])
+}
+
+model Call {
+  id             String   @id @default(cuid())
+  clinicId       String
+  agentId        String?
+  patientId      String?
+  phoneNumber    String
+  direction      String @default("INBOUND")
+  status         String @default("COMPLETED")
+  intent         String?
+  outcome        String?
+  sentiment      String?  // Routine | Urgent | Needs Staff Review
+  durationSec    Int      @default(0)
+  startedAt      DateTime @default(now())
+  endedAt        DateTime?
+  transferred    Boolean  @default(false)
+  transferReason String?
+  isAfterHours   Boolean  @default(false)
+  recordingUrl   String?
+  summary        String?
+  createdAt      DateTime @default(now())
+
+  clinic         Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  agent          AIAgent? @relation(fields: [agentId], references: [id])
+  patient        Patient? @relation(fields: [patientId], references: [id])
+  transcript     CallTranscript?
+  events         CallEvent[]
+  appointment    Appointment?
+
+  @@index([clinicId])
+  @@index([patientId])
+  @@index([startedAt])
+}
+
+model CallTranscript {
+  id        String   @id @default(cuid())
+  callId    String   @unique
+  segments  String   // JSON: [{role, text, ts, confidence}]
+  createdAt DateTime @default(now())
+  call      Call     @relation(fields: [callId], references: [id], onDelete: Cascade)
+}
+
+model CallEvent {
+  id        String   @id @default(cuid())
+  callId    String
+  type      String   // call.started, agent.speaking, patient.speaking, tool.called, call.ended
+  data      String?
+  createdAt DateTime @default(now())
+  call      Call     @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  @@index([callId])
+}
+
+// ----------------------------- Appointments -----------------------------
+
+model AppointmentType {
+  id          String   @id @default(cuid())
+  clinicId    String
+  name        String
+  durationMin Int      @default(30)
+  color       String   @default("#0ea5e9")
+  active      Boolean  @default(true)
+  clinic      Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  appointments Appointment[]
+
+  @@index([clinicId])
+}
+
+model Appointment {
+  id          String   @id @default(cuid())
+  clinicId    String
+  patientId   String
+  dentistId   String
+  typeId      String?
+  startTime   DateTime
+  endTime     DateTime
+  status      String @default("SCHEDULED")
+  source      String?  // voice | manual | online
+  notes       String?
+  callId      String?  @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  clinic      Clinic          @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  patient     Patient         @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  dentist     Dentist         @relation(fields: [dentistId], references: [id])
+  type        AppointmentType? @relation(fields: [typeId], references: [id])
+  call        Call?           @relation(fields: [callId], references: [id])
+
+  @@index([clinicId])
+  @@index([patientId])
+  @@index([dentistId])
+  @@index([startTime])
+}
+
+// ----------------------------- Messaging -----------------------------
+
+model Conversation {
+  id          String   @id @default(cuid())
+  clinicId    String
+  patientId   String?
+  channel     String @default("SMS")
+  patientName String?
+  patientPhone String?
+  lastMessageAt DateTime @default(now())
+  unread      Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  clinic      Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  patient     Patient?  @relation(fields: [patientId], references: [id])
+  messages    Message[]
+
+  @@index([clinicId])
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  patientId      String?
+  channel        String @default("SMS")
+  direction      String  // inbound | outbound
+  body           String
+  status         String  @default("sent")
+  senderKind     String  @default("agent") // agent | staff | system
+  createdAt      DateTime @default(now())
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  patient        Patient?     @relation(fields: [patientId], references: [id])
+
+  @@index([conversationId])
+}
+
+// ----------------------------- Knowledge -----------------------------
+
+model KnowledgeDocument {
+  id          String   @id @default(cuid())
+  clinicId    String
+  category    String   // clinic_info | services | doctors | hours | insurance | pricing | policies | faqs | emergency
+  title       String
+  content     String
+  tags        String   // JSON-encoded array
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  clinic      Clinic          @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  chunks      KnowledgeChunk[]
+
+  @@index([clinicId])
+  @@index([category])
+}
+
+model KnowledgeChunk {
+  id          String   @id @default(cuid())
+  documentId  String
+  content     String
+  embedding   String   // JSON-encoded float array (placeholder for vector search)
+  metadata    String?
+  createdAt   DateTime @default(now())
+
+  document    KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+}
+
+// ----------------------------- Integrations & Campaigns -----------------------------
+
+model Integration {
+  id          String   @id @default(cuid())
+  clinicId    String
+  type        String   // voice | calendar | messaging | crm | email
+  provider    String   // mock | twilio | retell | vapi | google | whatsapp
+  name        String
+  connected   Boolean  @default(false)
+  config      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  clinic      Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  @@index([clinicId])
+}
+
+model Campaign {
+  id          String   @id @default(cuid())
+  clinicId    String
+  agentId     String?
+  name        String
+  type        String   // appointment_reminder | recall | missed_call | new_patient | confirmation
+  trigger     String
+  channel     String @default("SMS")
+  message     String
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  clinic      Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  agent       AIAgent?  @relation(fields: [agentId], references: [id])
+  contacts    CampaignContact[]
+
+  @@index([clinicId])
+}
+
+model CampaignContact {
+  id          String   @id @default(cuid())
+  campaignId  String
+  patientId   String?
+  phone       String
+  status      String   @default("pending")
+  sentAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  campaign    Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId])
+}
+
+// ----------------------------- Misc -----------------------------
+
+model Notification {
+  id        String   @id @default(cuid())
+  clinicId  String
+  type      String
+  title     String
+  body      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  clinic    Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  @@index([clinicId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  clinicId  String
+  userId    String?
+  action    String
+  entity    String?
+  entityId  String?
+  metadata  String?
+  createdAt DateTime @default(now())
+  clinic    Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([clinicId])
+}
+
+// Enums are stored as String for SQLite compatibility.
+// In production with PostgreSQL, these can be converted back to native enums.
